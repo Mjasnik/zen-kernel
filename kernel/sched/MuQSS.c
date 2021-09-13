@@ -1155,10 +1155,21 @@ static int best_mask_cpu(int best_cpu, struct rq *rq, cpumask_t *tmpmask)
 	int best_ranking = CPUIDLE_DIFF_NODE | CPUIDLE_THREAD_BUSY |
 		CPUIDLE_DIFF_CPU | CPUIDLE_CACHE_BUSY | CPUIDLE_DIFF_CORE |
 		CPUIDLE_DIFF_CORE_LLC | CPUIDLE_DIFF_THREAD;
-	int cpu_tmp;
+	int cpu_tmp, masklen;
 
-	if (cpumask_test_cpu(best_cpu, tmpmask))
+	if ((masklen = cpumask_weight(tmpmask)) < 2) {
+		if (masklen)
+			best_cpu = cpumask_first(tmpmask);
 		goto out;
+	}
+	else if (cpumask_test_cpu(best_cpu, tmpmask)) {
+#ifdef CONFIG_SCHED_SMT
+		if (cpumask_subset(&cpu_rq(best_cpu)->thread_mask, tmpmask))
+			goto out;
+#else
+		goto out;
+#endif
+	}
 
 	for_each_cpu(cpu_tmp, tmpmask) {
 		int ranking, locality;
@@ -1180,18 +1191,18 @@ static int best_mask_cpu(int best_cpu, struct rq *rq, cpumask_t *tmpmask)
 				ranking |= CPUIDLE_DIFF_CORE_LLC;
 			else if (locality == LOCALITY_MC)
 				ranking |= CPUIDLE_DIFF_CORE;
-		if (!(tmp_rq->cache_idle(tmp_rq)))
-			ranking |= CPUIDLE_CACHE_BUSY;
+		if (ranking < best_ranking)
+			if (!(tmp_rq->cache_idle(tmp_rq)))
+				ranking |= CPUIDLE_CACHE_BUSY;
 #endif
 #ifdef CONFIG_SCHED_SMT
 		if (locality == LOCALITY_SMT)
 			ranking |= CPUIDLE_DIFF_THREAD;
+		if (ranking < best_ranking)
+			if (!(tmp_rq->siblings_idle(tmp_rq)))
+				ranking |= CPUIDLE_THREAD_BUSY;
 #endif
-		if (ranking < best_ranking
-#ifdef CONFIG_SCHED_SMT
-			|| (ranking == best_ranking && (tmp_rq->siblings_idle(tmp_rq)))
-#endif
-		) {
+		if (ranking < best_ranking) {
 			best_cpu = cpu_tmp;
 			best_ranking = ranking;
 		}
